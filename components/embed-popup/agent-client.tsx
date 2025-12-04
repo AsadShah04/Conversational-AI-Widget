@@ -20,7 +20,7 @@ function getUrlParams() {
   return {
     agentName: params.get('agentName') || 'BETTY',
     theme: params.get('theme') || '#724cfb',
-    agentId: params.get('agentId') || '',
+    agentId: params.get('agentId') || 'd5cbf87b-8ca0-4ab9-99b2-0fc8ff2fcf61',
     domainName: params.get('domainName') || '',
     agentRoom: params.get('agentRoom') || 'voso_room',
     formEnabled: params.get('form_enabled') || 'No',
@@ -43,6 +43,7 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
   const [callStatus, setCallStatus] = useState<string>('idle');
   // ✅ store callSid globally for hangup
   const [activeCallSid, setActiveCallSid] = useState<string | null>(null);
+  const [wasEverConnected, setWasEverConnected] = useState(false);
 
   // Dialer states
   const [showDialer, setShowDialer] = useState(false);
@@ -76,7 +77,7 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
 
   const agentName = config?.agentName || 'Betty';
   const themeColor = config?.theme || '#724cfb';
-  const agentId = config?.agentId || '23e88998-5fc1-4282-8c6f-29b545f67bea';
+  const agentId = config?.agentId || 'd5cbf87b-8ca0-4ab9-99b2-0fc8ff2fcf61';
   const domainName = config?.domainName || 'convoso';
   const agentRoom = config?.agentRoom || 'voso_room';
   const formEnabled = config?.formEnabled === 'Yes';
@@ -559,6 +560,7 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
         // 🟢 Active Call
         if (status === 'in-progress') {
           setConnected(true);
+          setWasEverConnected(true);
         }
 
         // 🔴 Ended or Failed
@@ -566,20 +568,26 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
         if (['completed', 'failed', 'busy', 'no-answer', 'canceled'].includes(status)) {
           console.log('🛑 Call ended. Sending STOP hit for agent:', agentId);
 
-          try {
-            // ⭐ FIRST: Send stop hit BEFORE clearing interval/UI reset
-            const stopRes = await fetch(api('/api/agents/stop'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                agent_id: agentId,
-              }),
-            });
+          // ⭐ Only send STOP if call was connected at least once
+          if (wasEverConnected) {
+            try {
+              console.log('🟡 Sending STOP hit (call was connected)');
 
-            const stopData = await stopRes.json();
-            console.log('🧹 STOP response →', stopData);
-          } catch (err) {
-            console.error('❌ STOP API error:', err);
+              const stopRes = await fetch(api('/api/agents/stop'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  agent_id: agentId,
+                }),
+              });
+
+              const stopData = await stopRes.json();
+              console.log('🧹 STOP response →', stopData);
+            } catch (err) {
+              console.error('❌ STOP API error:', err);
+            }
+          } else {
+            console.log('⛔ STOP skipped — call never connected');
           }
 
           // ⭐ SECOND: Clear interval
