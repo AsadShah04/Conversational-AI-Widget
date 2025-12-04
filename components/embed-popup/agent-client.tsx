@@ -199,6 +199,103 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
 
   // 🧠 Updated handleDialerCall (no "any" usage, fully typed)
 
+  // const handleDialerCall = async (): Promise<void> => {
+  //   if (dialerNumber.length < 10) {
+  //     setError({
+  //       title: 'Invalid Number',
+  //       description: 'Please enter a valid phone number',
+  //     });
+  //     return;
+  //   }
+
+  //   setIsCalling(true);
+  //   setError(null);
+
+  //   const phoneSid = config?.phoneSid || '';
+  //   const sipTrunkId = config?.sipTrunkId || '';
+  //   const phoneNumber = config?.phoneNumber || '';
+
+  //   // Always enforce US 10-digit with +1 prefix
+  //   const cleanNumber = dialerNumber.replace(/\D/g, '').slice(-10);
+  //   const sipCallTo = `+1${cleanNumber}`;
+
+  //   const payload = {
+  //     agent_id: agentId,
+  //     number_id: phoneSid,
+  //     sip_number: phoneNumber,
+  //     sip_trunk_id: sipTrunkId,
+  //     sip_call_to: sipCallTo,
+  //     room_name: agentRoom,
+  //     participant_identity: agentName,
+  //     participant_name: agentName,
+  //     wait_until_answered: true,
+  //     krisp_enabled: true,
+  //   };
+
+  //   try {
+  //     const res = await fetch(api('/api/telephony/call'), {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify(payload),
+  //     });
+
+  //     const data = (await res.json()) as unknown;
+
+  //     if (!res.ok) {
+  //       const message = (data as { message?: string })?.message || 'Call failed';
+  //       throw new Error(message);
+  //     }
+
+  //     console.log('✅ Call initiated:', data);
+
+  //     interface CallResponse {
+  //       data?: {
+  //         sid?: string;
+  //         livekit_sip_call_id?: string;
+  //         session_id?: string;
+  //         status?: string;
+  //         [key: string]: unknown;
+  //       };
+  //       success?: boolean;
+  //       message?: string;
+  //     }
+
+  //     const parsed = (data as CallResponse).data ?? {};
+  //     const callSid = parsed.sid || parsed.livekit_sip_call_id || parsed.session_id;
+
+  //     if (!callSid) {
+  //       console.warn('⚠️ No call identifier found in response.');
+  //       setConnected(true);
+  //       return;
+  //     }
+
+  //     console.log('📡 Stored call identifier:', callSid);
+  //     setActiveCallSid(callSid);
+
+  //     // 🧠 If this is a LiveKit SIP call, mark it connected instantly
+  //     console.log('callSid:', callSid);
+
+  //     if (callSid.startsWith('SCL_')) {
+  //       console.log('🎧 LiveKit SIP call detected — marking connected immediately');
+  //       setConnected(true);
+  //       setCallStatus('in-progress');
+  //       // ❌ don't return — allow status polling to start too
+  //     }
+
+  //     // 🕓 For both Twilio & LiveKit SIP calls — start polling
+  //     startCallStatusPolling(callSid);
+  //   } catch (err: unknown) {
+  //     const errorMsg = err instanceof Error ? err.message : 'Please try again later';
+  //     console.error('❌ Call failed:', err);
+  //     setError({
+  //       title: 'Call initiation failed',
+  //       description: errorMsg,
+  //     });
+  //   } finally {
+  //     setIsCalling(false);
+  //   }
+  // };
+
   const handleDialerCall = async (): Promise<void> => {
     if (dialerNumber.length < 10) {
       setError({
@@ -211,82 +308,98 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
     setIsCalling(true);
     setError(null);
 
-    const phoneSid = config?.phoneSid || '';
-    const sipTrunkId = config?.sipTrunkId || '';
-    const phoneNumber = config?.phoneNumber || '';
-
-    // Always enforce US 10-digit with +1 prefix
-    const cleanNumber = dialerNumber.replace(/\D/g, '').slice(-10);
-    const sipCallTo = `+1${cleanNumber}`;
-
-    const payload = {
-      agent_id: agentId,
-      number_id: phoneSid,
-      sip_number: phoneNumber,
-      sip_trunk_id: sipTrunkId,
-      sip_call_to: sipCallTo,
-      room_name: agentRoom,
-      participant_identity: agentName,
-      participant_name: agentName,
-      wait_until_answered: true,
-      krisp_enabled: true,
-    };
-
     try {
+      /* ----------------------------------------
+       * 1️⃣ FIRST — START AGENT SESSION
+       * ---------------------------------------- */
+      console.log('🚀 Starting agent session before dialing…');
+
+      const startRes = await fetch(api('/api/agents/start'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+          tenant_id: 'default',
+          client_identity: agentName,
+        }),
+      });
+
+      const startData = await startRes.json();
+      console.log('📡 Agent Start Response:', startData);
+
+      if (!startRes.ok) {
+        throw new Error(startData?.message || 'Failed to start agent session');
+      }
+
+      // ❗ IMPORTANT: Do NOT room.connect() for dialer
+      console.log('🧠 Agent session initialized — proceeding to telephony call.');
+
+      /* ----------------------------------------
+       * 2️⃣ PREPARE NUMBER — enforce +1XXXXXXXXXX
+       * ---------------------------------------- */
+      const phoneSid = config?.phoneSid || '';
+      const sipTrunkId = config?.sipTrunkId || '';
+      const phoneNumber = config?.phoneNumber || '';
+
+      const clean = dialerNumber.replace(/\D/g, '').slice(-10);
+      const sipCallTo = `+1${clean}`;
+
+      const payload = {
+        agent_id: agentId,
+        number_id: phoneSid,
+        sip_number: phoneNumber,
+        sip_trunk_id: sipTrunkId,
+        sip_call_to: sipCallTo,
+        room_name: agentRoom,
+        participant_identity: agentName,
+        participant_name: agentName,
+        wait_until_answered: true,
+        krisp_enabled: true,
+      };
+
+      /* ----------------------------------------
+       * 3️⃣ NOW — DIAL OUT
+       * ---------------------------------------- */
       const res = await fetch(api('/api/telephony/call'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      const data = (await res.json()) as unknown;
+      const data = await res.json();
 
       if (!res.ok) {
-        const message = (data as { message?: string })?.message || 'Call failed';
-        throw new Error(message);
+        throw new Error(data?.message || 'Call failed');
       }
 
-      console.log('✅ Call initiated:', data);
+      console.log('📞 Telephony call initiated:', data);
 
-      interface CallResponse {
-        data?: {
-          sid?: string;
-          livekit_sip_call_id?: string;
-          session_id?: string;
-          status?: string;
-          [key: string]: unknown;
-        };
-        success?: boolean;
-        message?: string;
-      }
-
-      const parsed = (data as CallResponse).data ?? {};
-      const callSid = parsed.sid || parsed.livekit_sip_call_id || parsed.session_id;
+      /* ----------------------------------------
+       * 4️⃣ Extract SID and begin polling
+       * ---------------------------------------- */
+      const callData = data?.data || {};
+      const callSid = callData.sid || callData.livekit_sip_call_id || callData.session_id || null;
 
       if (!callSid) {
-        console.warn('⚠️ No call identifier found in response.');
+        console.warn('⚠️ No call SID returned.');
         setConnected(true);
         return;
       }
 
-      console.log('📡 Stored call identifier:', callSid);
+      console.log('📡 Stored call SID:', callSid);
       setActiveCallSid(callSid);
 
-      // 🧠 If this is a LiveKit SIP call, mark it connected instantly
-      console.log('callSid:', callSid);
-
+      // LiveKit SIP calls auto-connect
       if (callSid.startsWith('SCL_')) {
-        console.log('🎧 LiveKit SIP call detected — marking connected immediately');
         setConnected(true);
         setCallStatus('in-progress');
-        // ❌ don't return — allow status polling to start too
       }
 
-      // 🕓 For both Twilio & LiveKit SIP calls — start polling
       startCallStatusPolling(callSid);
-    } catch (err: unknown) {
+    } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Please try again later';
-      console.error('❌ Call failed:', err);
+      console.error('❌ handleDialerCall FAILED:', err);
+
       setError({
         title: 'Call initiation failed',
         description: errorMsg,
@@ -296,12 +409,71 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
     }
   };
 
+  // const handleEndCallDialer = async () => {
+  //   try {
+  //     if (activeCallSid) {
+  //       console.log('🛑 Sending hangup request for:', activeCallSid);
+
+  //       // Pass room name and participant identity
+  //       const params = new URLSearchParams({
+  //         sid: activeCallSid,
+  //         room: agentRoom,
+  //         participant: agentName,
+  //       });
+
+  //       params.set('domainName', domainName);
+  //       const res = await fetch(api(`/api/telephony/hangup?${params}`), {
+  //         method: 'PATCH',
+  //       });
+
+  //       const data = await res.json();
+
+  //       if (!res.ok) throw new Error(data?.message || 'Failed to hang up the call');
+  //       console.log('✅ Call ended successfully');
+  //     }
+
+  //     if (agentId) {
+  //       console.log('🛑 Stopping agent session for:', agentId);
+
+  //       await fetch(api('/api/agents/stop'), {
+  //         method: 'POST',
+  //         headers: { 'Content-Type': 'application/json' },
+  //         body: JSON.stringify({
+  //           agent_id: agentId,
+  //           domainName: domainName,
+  //         }),
+  //       })
+  //         .then((r) => r.json())
+  //         .then((d) => {
+  //           console.log('🧹 Agent STOP response →', d);
+  //         })
+  //         .catch((err) => {
+  //           console.error('❌ Agent STOP error:', err);
+  //         });
+  //     }
+
+  //     await room.disconnect();
+  //     setConnected(false);
+  //     setCallDuration(0);
+  //     setIsMuted(false);
+  //     setActiveCallSid(null);
+  //   } catch (err) {
+  //     console.error('❌ Error ending call:', err);
+  //     setError({
+  //       title: 'Failed to end call',
+  //       description: err instanceof Error ? err.message : String(err),
+  //     });
+  //   }
+  // };
+
   const handleEndCallDialer = async () => {
     try {
+      /* ----------------------------------------------------
+       * 1️⃣ END DIALER CALL (Twilio / SIP)
+       * ---------------------------------------------------- */
       if (activeCallSid) {
         console.log('🛑 Sending hangup request for:', activeCallSid);
 
-        // Pass room name and participant identity
         const params = new URLSearchParams({
           sid: activeCallSid,
           room: agentRoom,
@@ -309,6 +481,7 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
         });
 
         params.set('domainName', domainName);
+
         const res = await fetch(api(`/api/telephony/hangup?${params}`), {
           method: 'PATCH',
         });
@@ -316,16 +489,43 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
         const data = await res.json();
 
         if (!res.ok) throw new Error(data?.message || 'Failed to hang up the call');
-        console.log('✅ Call ended successfully');
+
+        console.log('✅ Dialer call ended successfully');
       }
 
+      /* ----------------------------------------------------
+       * 2️⃣ STOP AGENT SESSION (same as handleEndCall)
+       * ---------------------------------------------------- */
+      if (agentId) {
+        console.log('🛑 Stopping agent session for:', agentId);
+
+        const stopRes = await fetch(api('/api/agents/stop'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent_id: agentId,
+          }),
+        });
+
+        const stopData = await stopRes.json();
+        console.log('🧹 Agent STOP response →', stopData);
+      }
+
+      /* ----------------------------------------------------
+       * 3️⃣ DISCONNECT FROM LIVEKIT (if connected)
+       * ---------------------------------------------------- */
       await room.disconnect();
+
+      /* ----------------------------------------------------
+       * 4️⃣ RESET STATES
+       * ---------------------------------------------------- */
       setConnected(false);
       setCallDuration(0);
       setIsMuted(false);
       setActiveCallSid(null);
     } catch (err) {
       console.error('❌ Error ending call:', err);
+
       setError({
         title: 'Failed to end call',
         description: err instanceof Error ? err.message : String(err),
@@ -362,10 +562,33 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
         }
 
         // 🔴 Ended or Failed
+        // 🔴 Ended or Failed
         if (['completed', 'failed', 'busy', 'no-answer', 'canceled'].includes(status)) {
+          console.log('🛑 Call ended. Sending STOP hit for agent:', agentId);
+
+          try {
+            // ⭐ FIRST: Send stop hit BEFORE clearing interval/UI reset
+            const stopRes = await fetch(api('/api/agents/stop'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                agent_id: agentId,
+              }),
+            });
+
+            const stopData = await stopRes.json();
+            console.log('🧹 STOP response →', stopData);
+          } catch (err) {
+            console.error('❌ STOP API error:', err);
+          }
+
+          // ⭐ SECOND: Clear interval
           clearInterval(pollInterval);
+
+          // ⭐ LAST: Reset UI state
           setConnected(false);
           setCallDuration(0);
+
           console.log(`🛑 Call ${callSid} ended with status: ${status}`);
         }
       } catch (err) {
@@ -561,7 +784,7 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
       const payload = {
         agent_id: agentId,
         tenant_id: 'default',
-        client_identity: identity, // <<--- IMPORTANT FIX
+        client_identity: agentName, // <<--- IMPORTANT FIX
       };
 
       const url = '/api/agents/start';
@@ -727,7 +950,20 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
 
   const handleEndCall = async () => {
     try {
+      console.log('🛑 Ending agent call for:', agentId);
+
+      // 🔥 NEW — notify backend to end agent session
+      await fetch('/api/agents/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agentId,
+        }),
+      });
+
+      // 🔌 Disconnect LiveKit
       await room.disconnect();
+
       setConnected(false);
       setCallDuration(0);
       setIsMuted(false);
@@ -1481,7 +1717,7 @@ function AgentClient({ appConfig }: EmbedFixedAgentClientProps) {
                       </div>
 
                       <h2 className="mb-1 text-xl font-semibold text-white">Talk</h2>
-                      <p className="mb-4 max-w-sm px-2 text-sm leading-relaxed text-gray-300">
+                      <p className="mb-4 max-w-sm px-2 text-[13px] leading-relaxed text-gray-300">
                         Experience our advanced {agentName} voice agent with real-time conversation
                         capabilities.
                       </p>
